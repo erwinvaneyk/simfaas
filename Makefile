@@ -2,13 +2,13 @@ REPO=docker.io/erwinvaneyk
 IMAGE=simfission
 VERSION=latest
 
-.PHONY: build publish test
+.PHONY: publish test
 
-build: cmd/simfission/simfission.go
-	(cd cmd/simfission && docker build --tag="${REPO}/${IMAGE}:${VERSION}" .)
+build: simfaas.go cmd/simfission/simfission.go Dockerfile
+	docker build --tag="${REPO}/${IMAGE}:${VERSION}" .
 
 publish: build
 	docker push "${REPO}/${IMAGE}:${VERSION}"
 
 serve: build
-	docker run --rm -p 8080:80 "${REPO}/${IMAGE}:${VERSION}"
+	docker run --rm -p 8888:8888 "${REPO}/${IMAGE}:${VERSION}"

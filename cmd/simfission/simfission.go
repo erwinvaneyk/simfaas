@@ -3,18 +3,20 @@ package main
 import (
 	"encoding/json"
 	`flag`
+	`fmt`
+	`github.com/erwinvaneyk/simfaas`
 	`github.com/prometheus/client_golang/prometheus`
 	`github.com/prometheus/client_golang/prometheus/promhttp`
-	`go.uber.org/atomic`
 	"io/ioutil"
 	"log"
 	"net/http"
 	`strconv`
-	`sync`
 	"time"
 )
 
 // simfaas - is a very simple mock of a FaaS platform to implement the sleep function with minimal interference
+
+const defaultFnName = "sleep"
 
 var (
 	buildTime string // UNIX
@@ -65,12 +67,6 @@ var (
 	})
 )
 
-type Function struct {
-	name       string
-	lastExec   time.Time
-	deployedAt time.Time
-}
-
 func init() {
 	prometheus.MustRegister(requestCount, requestDuration, requestInFlight, fnResources, fnResourceUsage)
 }
@@ -91,40 +87,31 @@ func main() {
 			(*keepWarmDuration).String())
 	}
 	
-	// Setup server
-	mux := http.NewServeMux()
-	fnCache := sync.Map{} // map[string]Function
-	fnActive := atomic.Int32{}
-	
-	// Function GC
-	if useColdStarts {
-		tick := time.NewTicker(10 * time.Second)
-		go func() {
-			<-tick.C
-			n := time.Now()
-			
-			fnCache.Range(func(k, v interface{}) bool {
-				entry := v.(Function)
-				if entry.lastExec.Add(*keepWarmDuration).Before(n) {
-					log.Printf("Cleaned-up fn %s", k)
-					fnCache.Delete(k)
-					fnActive.Dec()
-				}
-				return true
-			})
-		}()
+	// Setup simulator
+	faas := simfaas.New()
+	if err := faas.Init(); err != nil {
+		log.Fatalf("Failed to start FaaS simulator: %v", err)
 	}
 	
-	// Resource simulator
+	// Define the default function
+	faas.Define(defaultFnName, &simfaas.FunctionConfig{
+		ColdStartDuration: *coldStartDuration,
+		KeepWarmDuration:  *keepWarmDuration,
+	})
+	
+	// Publish FaaS simulator resource usage to Prometheus
 	go func() {
 		ticker := time.NewTicker(time.Second)
 		for {
 			<-ticker.C
-			activeFns := fnActive.Load()
+			activeFns := faas.ActiveExecutions()
 			fnResourceUsage.Add(float64(activeFns))
 			fnResources.Set(float64(activeFns))
 		}
 	}()
+	
+	// Setup server
+	mux := http.NewServeMux()
 	
 	// Application info
 	versionHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -155,15 +142,15 @@ func main() {
 	// Mock the pre-warming endpoint
 	prewarmHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if fn := r.URL.Query().Get("fn"); useColdStarts && len(fn) > 0 {
-			log.Printf("Prewarmed fn %s", fn)
-			fnCache.Store(fn, Function{
-				name:       fn,
-				deployedAt: time.Now().Add(*coldStartDuration),
-				lastExec:   time.Now().Add(*coldStartDuration),
-			})
+			// Prewarming is an async operation
 			go func() {
-				time.Sleep(*coldStartDuration)
-				fnActive.Inc()
+				_, err := faas.Deploy(fn)
+				if err != nil {
+					errMsg := fmt.Sprintf("%s: failed to prewarm: %v", fn, err)
+					log.Println(errMsg)
+					http.Error(w, errMsg, 500)
+					return
+				}
 			}()
 		}
 		w.WriteHeader(http.StatusOK)
@@ -177,16 +164,17 @@ func main() {
 	
 	// Mock the actual function execution endpoint
 	fnSleepHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		var runtime float64 // in seconds
+		// Parse arguments: fn, runtime
+		var seconds float64
 		var err error
 		if queryRuntime := r.URL.Query().Get("runtime"); len(queryRuntime) > 0 {
 			// Read query
-			runtime, err = strconv.ParseFloat(queryRuntime, 64)
+			seconds, err = strconv.ParseFloat(queryRuntime, 64)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
+			
 		} else {
 			// Read body
 			defer r.Body.Close()
@@ -201,55 +189,36 @@ func main() {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			runtime = payload.Runtime
+			seconds = payload.Runtime
+		}
+		runtime := time.Duration(seconds * float64(time.Second))
+		
+		fnName := r.URL.Query().Get("fn")
+		if len(fnName) == 0 {
+			fnName = defaultFnName
 		}
 		
-		// Decide on cold start
-		fn := r.URL.Query().Get("fn")
-		coldStart, err := time.ParseDuration(r.URL.Query().Get("coldstart.duration"))
+		// Create function in simulator if undefined
+		if _, ok := faas.Get(fnName); !ok {
+			faas.Define(fnName, &simfaas.FunctionConfig{
+				ColdStartDuration: *coldStartDuration,
+				KeepWarmDuration:  *keepWarmDuration,
+			})
+		}
+		
+		// Run function
+		report, err := faas.Run(fnName, &runtime)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		// First check if cold start was set for the specific request
-		if useColdStarts && len(fn) > 0 {
-			i, ok := fnCache.LoadOrStore(fn, Function{
-				deployedAt: time.Now().Add(*coldStartDuration),
-				lastExec:   time.Now().Add(*coldStartDuration),
-			})
-			if !ok {
-				// Simulate deployment
-				coldStart = *coldStartDuration
-				time.Sleep(coldStart)
-				fnActive.Inc()
-				log.Printf("Deployed fn %s (cold start: %s)", fn, coldStart.String())
-			} else {
-				entry := i.(Function)
-				// Function is still being deployed, we need to wait a bit longer
-				if entry.deployedAt.After(time.Now()) {
-					time.Sleep(entry.deployedAt.Sub(time.Now()))
-				}
-				
-				// Refresh timer on the existing function instance
-				fnCache.Store(fn, Function{
-					name:       fn,
-					deployedAt: i.(Function).deployedAt,
-					lastExec:   time.Now(),
-				})
-			}
-		} else {
-			// If we are not using cold starts we have to record the 'instant' deployment still
-			fnActive.Inc()
-		}
 		
 		// Simulate runtime
-		du := time.Duration(runtime * float64(time.Second))
-		time.Sleep(du)
 		result, _ := json.Marshal(map[string]interface{}{
-			"start":     start.UnixNano(),
-			"coldStart": coldStart.Nanoseconds(),
-			"runtime":   du.Nanoseconds(),
-			"end":       time.Now().UnixNano(),
+			"started_at":  report.StartedAt.UnixNano(),
+			"finished_at": report.FinishedAt.UnixNano(),
+			"coldStart":   report.ColdStart.Nanoseconds(),
+			"runtime":     report.Runtime.Nanoseconds(),
 		})
 		w.WriteHeader(http.StatusOK)
 		w.Write(result)
