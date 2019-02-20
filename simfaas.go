@@ -78,7 +78,10 @@ func (p *Platform) runFunctionGC(closeC <-chan struct{}) {
 		}
 		now := time.Now()
 		p.RangeFunctions(func(k string, fn *Function) bool {
-			if fn.instances.Load() > 0 && fn.lastExec.Add(fn.KeepWarmDuration).Before(now) {
+			if fn.instances.Load() > 0 &&
+				fn.lastExec.Add(fn.KeepWarmDuration).Before(now) &&
+				fn.deployedAt.Add(fn.KeepWarmDuration).Before(now) &&
+				fn.active.Load() == 0 {
 				p.cleanup(fn)
 				log.Printf("%s: cleaned up instance (1 -> 0)", k)
 			}

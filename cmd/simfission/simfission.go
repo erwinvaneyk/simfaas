@@ -79,6 +79,8 @@ func main() {
 		"How long the function should be kept warm after an execution.")
 	addr := flag.String("addr", ":8888", "Address to bind the server to.")
 	flag.Parse()
+	log.Printf("simfission %s", buildTime)
+	
 	useColdStarts := *coldStartDuration > 0 || *keepWarmDuration > 0
 	if !useColdStarts {
 		log.Println("cold starts disabled. Cold start duration or keep warm duration should be larger than zero.")
