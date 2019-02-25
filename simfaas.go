@@ -58,7 +58,7 @@ func New() *Platform {
 	}
 }
 
-func (p *Platform) Init() error {
+func (p *Platform) Start() error {
 	p.init.Do(func() {
 		ctx, closeFn := context.WithCancel(context.Background())
 		go p.runFunctionGC(ctx.Done())
@@ -116,6 +116,8 @@ func (p *Platform) cleanup(fn *Function) {
 	fn.instances.Store(0)
 }
 
+// Run emulates a function execution in a synchronous way, sleeping for the entire executionRuntime
+//
 // TODO handle inputs and outputs
 func (p *Platform) Run(fnName string, executionRuntime *time.Duration) (*ExecutionReport, error) {
 	startedAt := time.Now()
@@ -127,12 +129,8 @@ func (p *Platform) Run(fnName string, executionRuntime *time.Duration) (*Executi
 	
 	// Ensure that there is enough capacity
 	var coldStart time.Duration
-	var err error
 	if fn.instances.Load() == 0 {
-		coldStart, err = p.deploy(fn)
-		if err != nil {
-			return nil, err
-		}
+		coldStart = p.deploy(fn)
 	}
 	
 	// Simulate function execution
@@ -174,10 +172,10 @@ func (p *Platform) Deploy(fnName string) (coldStart time.Duration, err error) {
 		return 0, ErrFunctionNotFound
 	}
 	
-	return p.deploy(fn)
+	return p.deploy(fn), nil
 }
 
-func (p *Platform) deploy(fn *Function) (coldStart time.Duration, err error) {
+func (p *Platform) deploy(fn *Function) (coldStart time.Duration) {
 	// Deploy if there is no instance available
 	startedAt := time.Now()
 	fn.mu.Lock()
@@ -188,5 +186,5 @@ func (p *Platform) deploy(fn *Function) (coldStart time.Duration, err error) {
 		log.Printf("%s: deployed instance (0 -> 1)", fn.name)
 	}
 	fn.mu.Unlock()
-	return time.Now().Sub(startedAt), nil
+	return time.Now().Sub(startedAt)
 }
