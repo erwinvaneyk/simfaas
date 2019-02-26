@@ -18,9 +18,9 @@ var (
 )
 
 type FunctionConfig struct {
-	ColdStartDuration time.Duration
-	KeepWarmDuration  time.Duration
-	Runtime           time.Duration
+	ColdStart time.Duration
+	KeepWarm  time.Duration
+	Runtime   time.Duration
 	
 	// instanceCapacity defines the number of parallel executions a function instance can handle
 	// Negative or zero indicates an infinite capacity; no more than 1 instance is used.
@@ -79,8 +79,8 @@ func (p *Platform) runFunctionGC(closeC <-chan struct{}) {
 		now := time.Now()
 		p.RangeFunctions(func(k string, fn *Function) bool {
 			if fn.instances.Load() > 0 &&
-				fn.lastExec.Add(fn.KeepWarmDuration).Before(now) &&
-				fn.deployedAt.Add(fn.KeepWarmDuration).Before(now) &&
+				fn.lastExec.Add(fn.KeepWarm).Before(now) &&
+				fn.deployedAt.Add(fn.KeepWarm).Before(now) &&
 				fn.active.Load() == 0 {
 				p.cleanup(fn)
 				log.Printf("%s: cleaned up instance (1 -> 0)", k)
@@ -180,7 +180,7 @@ func (p *Platform) deploy(fn *Function) (coldStart time.Duration) {
 	startedAt := time.Now()
 	fn.mu.Lock()
 	if fn.instances.Load() == 0 {
-		time.Sleep(fn.ColdStartDuration)
+		time.Sleep(fn.ColdStart)
 		fn.instances.Store(1)
 		fn.deployedAt = time.Now()
 		log.Printf("%s: deployed instance (0 -> 1)", fn.name)

@@ -168,4 +168,10 @@ func getFunctionNameFromUrl(url *url.URL) string {
 	return url.Path[strings.LastIndex(url.Path, "/")+1:]
 }
 
-func svc2fn(svc string) string { return svc }
+func svc2fn(svc string) string {
+	svcURL, err := url.Parse(svc)
+	if err != nil {
+		return svc
+	}
+	return svcURL.Host
+}

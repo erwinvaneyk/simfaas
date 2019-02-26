@@ -90,8 +90,8 @@ func main() {
 		CreateUndefinedFunctions: true,
 		FnFactory: func(fnName string) *simfaas.FunctionConfig {
 			return &simfaas.FunctionConfig{
-				ColdStartDuration: *coldStart,
-				KeepWarmDuration:  *keepWarm,
+				ColdStart: *coldStart,
+				KeepWarm:  *keepWarm,
 			}
 		},
 	}
@@ -132,8 +132,8 @@ func main() {
 	
 	// Collect and expose metrics
 	mux := &simfaas.RegexpHandler{}
-	instrumentEndpoint(mux, regexp.MustCompile("/metrics"), promhttp.Handler())
 	instrumentEndpoint(mux, regexp.MustCompile("/"), versionHandler)
+	mux.Handler(regexp.MustCompile("/metrics"), promhttp.Handler())
 	instrumentEndpoint(mux, regexp.MustCompile("/v2/functions/.*"), http.HandlerFunc(fission.HandleFunctionsGet))
 	instrumentEndpoint(mux, regexp.MustCompile("/v2/tapService"), http.HandlerFunc(fission.HandleTapService))
 	instrumentEndpoint(mux, regexp.MustCompile("/v2/getServiceForFunction"), http.HandlerFunc(fission.HandleGetServiceForFunction))
