@@ -39,22 +39,27 @@ type Function struct {
 	name       string
 	deployedAt time.Time
 	lastExec   time.Time
-	instances  atomic.Uint32
-	active     atomic.Uint32
 	mu         sync.RWMutex
+	
+	// instances reports the number of instances of this function currently deployed.
+	instances atomic.Uint32
+	
+	// active reports the number of executions of this function currently running.
+	active atomic.Uint32
 }
 
 type Platform struct {
-	functions *sync.Map // map[string]*Function
-	init      *sync.Once
-	stopFn    func()
-	activeFns atomic.Uint32
+	functions        *sync.Map // map[string]*Function
+	init             *sync.Once
+	stopFn           func()
+	activeInstances  atomic.Uint32
+	activeExecutions atomic.Uint32
 }
 
 func New() *Platform {
 	return &Platform{
 		functions: &sync.Map{},
-		init: &sync.Once{},
+		init:      &sync.Once{},
 	}
 }
 
@@ -82,6 +87,7 @@ func (p *Platform) runFunctionGC(closeC <-chan struct{}) {
 				fn.lastExec.Add(fn.KeepWarm).Before(now) &&
 				fn.deployedAt.Add(fn.KeepWarm).Before(now) &&
 				fn.active.Load() == 0 {
+				
 				p.cleanup(fn)
 				log.Printf("%s: cleaned up instance (1 -> 0)", k)
 			}
@@ -97,7 +103,11 @@ func (p *Platform) RangeFunctions(rangeFn func(k string, fn *Function) bool) {
 }
 
 func (p *Platform) ActiveExecutions() uint32 {
-	return p.activeFns.Load()
+	return p.activeExecutions.Load()
+}
+
+func (p *Platform) ActiveFunctionInstances() uint32 {
+	return p.activeInstances.Load()
 }
 
 func (p *Platform) Close() error {
@@ -113,6 +123,7 @@ func (p *Platform) Define(fnName string, config *FunctionConfig) {
 }
 
 func (p *Platform) cleanup(fn *Function) {
+	p.activeInstances.Dec()
 	fn.instances.Store(0)
 }
 
@@ -135,14 +146,14 @@ func (p *Platform) Run(fnName string, executionRuntime *time.Duration) (*Executi
 	
 	// Simulate function execution
 	fn.active.Inc()
-	p.activeFns.Inc()
+	p.activeExecutions.Inc()
 	runtime := fn.Runtime
 	if executionRuntime != nil {
 		runtime = *executionRuntime
 	}
 	time.Sleep(runtime)
 	fn.active.Dec()
-	p.activeFns.Dec()
+	p.activeExecutions.Dec()
 	finishedAt := time.Now()
 	
 	// Update function stats
@@ -152,7 +163,7 @@ func (p *Platform) Run(fnName string, executionRuntime *time.Duration) (*Executi
 	return &ExecutionReport{
 		StartedAt:  startedAt,
 		FinishedAt: finishedAt,
-		Runtime:	finishedAt.Sub(startedAt),
+		Runtime:    finishedAt.Sub(startedAt),
 		ColdStart:  coldStart,
 	}, nil
 }
@@ -182,6 +193,7 @@ func (p *Platform) deploy(fn *Function) (coldStart time.Duration) {
 	if fn.instances.Load() == 0 {
 		time.Sleep(fn.ColdStart)
 		fn.instances.Store(1)
+		p.activeInstances.Inc()
 		fn.deployedAt = time.Now()
 		log.Printf("%s: deployed instance (0 -> 1)", fn.name)
 	}

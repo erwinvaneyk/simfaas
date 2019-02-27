@@ -40,10 +40,10 @@ var (
 		},
 	}, []string{"path", "code", "method"})
 	
-	requestInFlight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	executionsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "simfaas",
-		Name:      "api_request_inflight",
-		Help:      "Number of requests in-flight.",
+		Name:      "api_executions_active",
+		Help:      "Number of function executions currently running.",
 	}, []string{"path"})
 	
 	//
@@ -56,7 +56,7 @@ var (
 		Help:      "Current simulated resource usage of functions.",
 	})
 	
-	fnResourceUsage = prometheus.NewGauge(prometheus.GaugeOpts{
+	fnResourceUsage = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: "simfaas",
 		Name:      "fn_resource_usage_total",
 		Help:      "Total simulated resource usage of functions.",
@@ -64,7 +64,7 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(requestCount, requestDuration, requestInFlight, fnResources, fnResourceUsage)
+	prometheus.MustRegister(requestCount, requestDuration, executionsActive, fnResources, fnResourceUsage)
 }
 
 func main() {
@@ -104,7 +104,7 @@ func main() {
 		ticker := time.NewTicker(time.Second)
 		for {
 			<-ticker.C
-			activeFns := fission.Platform.ActiveExecutions()
+			activeFns := fission.Platform.ActiveFunctionInstances()
 			fnResourceUsage.Add(float64(activeFns))
 			fnResources.Set(float64(activeFns))
 		}
@@ -117,7 +117,7 @@ func main() {
 			Name      string
 			BuildTime string
 		}{
-			Name:      "simfaas",
+			Name:      "simfission",
 			BuildTime: buildTime,
 		})
 		if err != nil {
@@ -152,6 +152,6 @@ func instrumentEndpoint(mux *simfaas.RegexpHandler, regexPath *regexp.Regexp, ha
 	path := regexPath.String()
 	mux.Handler(regexPath, promhttp.InstrumentHandlerCounter(requestCount.MustCurryWith(prometheus.Labels{"path": path}),
 		promhttp.InstrumentHandlerDuration(requestDuration.MustCurryWith(prometheus.Labels{"path": path}),
-			promhttp.InstrumentHandlerInFlight(requestInFlight.With(prometheus.Labels{"path": path}),
+			promhttp.InstrumentHandlerInFlight(executionsActive.With(prometheus.Labels{"path": path}),
 				handler))))
 }
