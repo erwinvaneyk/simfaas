@@ -46,6 +46,10 @@ type Function struct {
 	
 	// active reports the number of executions of this function currently running.
 	active atomic.Uint32
+	
+	// queued reports the number of executions of this function currently queued, waiting for instances to free up or
+	// additional to be deployed.
+	queued atomic.Uint32
 }
 
 type Platform struct {
@@ -54,6 +58,7 @@ type Platform struct {
 	stopFn           func()
 	activeInstances  atomic.Uint32
 	activeExecutions atomic.Uint32
+	queuedExecutions atomic.Uint32
 }
 
 func New() *Platform {
@@ -106,6 +111,10 @@ func (p *Platform) ActiveExecutions() uint32 {
 	return p.activeExecutions.Load()
 }
 
+func (p *Platform) QueuedExecutions() uint32 {
+	return p.queuedExecutions.Load()
+}
+
 func (p *Platform) ActiveFunctionInstances() uint32 {
 	return p.activeInstances.Load()
 }
@@ -141,7 +150,11 @@ func (p *Platform) Run(fnName string, executionRuntime *time.Duration) (*Executi
 	// Ensure that there is enough capacity
 	var coldStart time.Duration
 	if fn.instances.Load() == 0 {
+		p.queuedExecutions.Inc()
+		fn.queued.Inc()
 		coldStart = p.deploy(fn)
+		fn.queued.Dec()
+		p.queuedExecutions.Dec()
 	}
 	
 	// Simulate function execution

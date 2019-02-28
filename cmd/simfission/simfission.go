@@ -17,6 +17,10 @@ import (
 var (
 	buildTime string // UNIX
 	
+	//
+	// HTTP server metrics
+	//
+	
 	requestCount = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "simfaas",
 		Name:      "api_request_count",
@@ -30,21 +34,28 @@ var (
 		Objectives: map[float64]float64{
 			0:    0.001,
 			0.01: 0.001,
+			0.02: 0.001,
 			0.1:  0.01,
 			0.25: 0.01,
-			0.5:  0.05,
+			0.5:  0.01,
 			0.75: 0.01,
 			0.9:  0.01,
+			0.98: 0.001,
 			0.99: 0.001,
 			1:    0.001,
 		},
 	}, []string{"path", "code", "method"})
 	
-	executionsActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	//
+	// Execution metrics
+	//
+	
+	// TODO also include function name
+	executionStatus = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "simfaas",
-		Name:      "api_executions_active",
-		Help:      "Number of function executions currently running.",
-	}, []string{"path"})
+		Name:      "executions",
+		Help:      "Number of function executions inflight.",
+	}, []string{"status"})
 	
 	//
 	// (Simulated) Resource Metrics
@@ -64,14 +75,13 @@ var (
 )
 
 func init() {
-	prometheus.MustRegister(requestCount, requestDuration, executionsActive, fnResources, fnResourceUsage)
+	prometheus.MustRegister(requestCount, requestDuration, executionStatus, fnResources, fnResourceUsage)
 }
 
 func main() {
 	// Parse arguments
 	coldStart := flag.Duration("cold-start", 0, "The default cold start duration")
-	keepWarm := flag.Duration("keep-warm", 0,
-		"How long the function should be kept warm after an execution.")
+	keepWarm := flag.Duration("keep-warm", 0, "How long the function should be kept warm after an execution.")
 	addr := flag.String("addr", ":8888", "Address to bind the server to.")
 	flag.Parse()
 	log.Printf("simfission %s", buildTime)
@@ -107,6 +117,8 @@ func main() {
 			activeFns := fission.Platform.ActiveFunctionInstances()
 			fnResourceUsage.Add(float64(activeFns))
 			fnResources.Set(float64(activeFns))
+			executionStatus.WithLabelValues("queued").Set(float64(fission.Platform.QueuedExecutions()))
+			executionStatus.WithLabelValues("active").Set(float64(fission.Platform.ActiveExecutions()))
 		}
 	}()
 	
@@ -151,7 +163,5 @@ func main() {
 func instrumentEndpoint(mux *simfaas.RegexpHandler, regexPath *regexp.Regexp, handler http.Handler) {
 	path := regexPath.String()
 	mux.Handler(regexPath, promhttp.InstrumentHandlerCounter(requestCount.MustCurryWith(prometheus.Labels{"path": path}),
-		promhttp.InstrumentHandlerDuration(requestDuration.MustCurryWith(prometheus.Labels{"path": path}),
-			promhttp.InstrumentHandlerInFlight(executionsActive.With(prometheus.Labels{"path": path}),
-				handler))))
+		promhttp.InstrumentHandlerDuration(requestDuration.MustCurryWith(prometheus.Labels{"path": path}), handler)))
 }

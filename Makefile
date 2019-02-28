@@ -16,7 +16,7 @@ install:
 	CGO_ENABLED=0 go install \
         -gcflags=-trimpath="/go/src/github.com/erwinvaneyk/simfaas" \
         -asmflags=-trimpath="/go/src/github.com/erwinvaneyk/simfaas" \
-        -ldflags "-X \"main.buildTime=$(date)\" " \
+        -ldflags "-X \"main.buildTime=$(shell date)\" " \
         $(CURDIR)/cmd/simfission
 
 
