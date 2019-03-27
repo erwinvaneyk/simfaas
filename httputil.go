@@ -5,15 +5,8 @@ import (
 	`regexp`
 )
 
-//
-// To enable wildcards
-//
-
-type route struct {
-	pattern *regexp.Regexp
-	handler http.Handler
-}
-
+// RegexpHandler is simple http.Handler to enable the use of
+// wildcards in routes.
 type RegexpHandler struct {
 	routes []*route
 }
@@ -37,4 +30,9 @@ func (h *RegexpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// no pattern matched; send 404 response
 	http.NotFound(w, r)
+}
+
+type route struct {
+	pattern *regexp.Regexp
+	handler http.Handler
 }

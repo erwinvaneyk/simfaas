@@ -12,9 +12,8 @@ import (
 	"time"
 )
 
-// simfaas - is a very simple mock of a FaaS platform to implement the sleep function with minimal interference
-
 var (
+	// buildTime is a UNIX datetime that should be injected at build time.
 	buildTime string // UNIX
 	
 	//
@@ -82,7 +81,7 @@ func main() {
 	// Parse arguments
 	coldStart := flag.Duration("cold-start", 0, "The default cold start duration")
 	keepWarm := flag.Duration("keep-warm", 0, "How long the function should be kept warm after an execution.")
-	addr := flag.String("addr", ":8888", "Address to bind the server to.")
+	addr := flag.String("addr", ":8888", "Address serve the API on.")
 	flag.Parse()
 	log.Printf("simfission %s", buildTime)
 	
@@ -108,6 +107,7 @@ func main() {
 	if err := fission.Start(); err != nil {
 		log.Fatalf("Failed to start FaaS simulator: %v", err)
 	}
+	defer fission.Close()
 	
 	// Publish FaaS simulator resource usage to Prometheus
 	go func() {

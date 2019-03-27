@@ -28,10 +28,10 @@ type FunctionConfig struct {
 }
 
 type ExecutionReport struct {
-	ColdStart  time.Duration
-	Runtime    time.Duration
-	StartedAt  time.Time
-	FinishedAt time.Time
+	ColdStart  time.Duration `json:"cold_start"`
+	Runtime    time.Duration `json:"runtime"`
+	StartedAt  time.Time     `json:"started_at"`
+	FinishedAt time.Time     `json:"finished_at"`
 }
 
 type Function struct {
@@ -47,8 +47,8 @@ type Function struct {
 	// active reports the number of executions of this function currently running.
 	active atomic.Uint32
 	
-	// queued reports the number of executions of this function currently queued, waiting for instances to free up or
-	// additional to be deployed.
+	// queued reports the number of executions of this function currently queued,
+	// waiting for instances to free up or additional to be deployed.
 	queued atomic.Uint32
 }
 
@@ -136,9 +136,10 @@ func (p *Platform) cleanup(fn *Function) {
 	fn.instances.Store(0)
 }
 
-// Run emulates a function execution in a synchronous way, sleeping for the entire executionRuntime
+// Run emulates a function execution in a synchronous way,
+// sleeping for the entire executionRuntime.
 //
-// TODO handle inputs and outputs
+// TODO emulate inputs and outputs
 func (p *Platform) Run(fnName string, executionRuntime *time.Duration) (*ExecutionReport, error) {
 	startedAt := time.Now()
 	// Find the function

@@ -5,8 +5,10 @@ import (
 	`testing`
 )
 
-func TestFission_Run(t *testing.T) {
-	simFission := NewFission(0, 0)
+func TestFission_Setup(t *testing.T) {
+	simFission := Fission{
+		Platform: New(),
+	}
 	srv := httptest.NewServer(simFission.Serve())
-	defer srv.Close()
+	srv.Close()
 }

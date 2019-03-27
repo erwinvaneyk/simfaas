@@ -1,7 +1,6 @@
 REPO=docker.io/erwinvaneyk
 IMAGE=simfission
 VERSION=latest
-ROOT_DIR=$(dirname $0)
 
 .PHONY: publish test build install
 

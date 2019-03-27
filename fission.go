@@ -13,12 +13,28 @@ import (
 	`time`
 )
 
+// Fission is a wrapper on top of simfaas that emulates a part of the
+// interface of Fission.
 type Fission struct {
 	Platform                 *Platform
 	FnFactory                func(name string) *FunctionConfig
+	
+	// CreateUndefinedFunctions enables, if set to true,
+	// the automatic creation of a function if it is called.
 	CreateUndefinedFunctions bool
 }
 
+func (f *Fission) Start() error {
+	return f.Platform.Start()
+}
+
+func (f *Fission) Close() error {
+	return f.Platform.Close()
+}
+
+// GetServiceForFunction emulates the mapping of a function to a service
+// name/host. Currently it just returns the name of the function as the
+// service name.
 func (f *Fission) GetServiceForFunction(fnName string) (string, error) {
 	f.createIfUndefined(fnName)
 	fn, ok := f.Platform.Get(fnName)
@@ -28,7 +44,10 @@ func (f *Fission) GetServiceForFunction(fnName string) (string, error) {
 	return fn.name, nil
 }
 
-// We assume that url is just the function name
+// TapService deploys (or keeps deployed) a function instance for the function.
+//
+// Note: similar as in GetServiceForFunction, we assume that the service url is
+// just the function name.
 func (f *Fission) TapService(svcURL string) error {
 	if len(svcURL) == 0 {
 		return errors.New("no url provided to tap")
@@ -48,6 +67,15 @@ func (f *Fission) TapService(svcURL string) error {
 	return nil
 }
 
+// Run emulates the execution of a Fission Function.
+//
+// If the runtime is not nil it will be used to override the runtime
+// specified in the config of the function.
+func (f *Fission) Run(fnName string, runtime *time.Duration) (*ExecutionReport, error) {
+	f.createIfUndefined(fnName)
+	return f.Platform.Run(fnName, runtime)
+}
+
 func (f *Fission) Serve() http.Handler {
 	handler := &RegexpHandler{}
 	handler.HandleFunc(regexp.MustCompile("/v2/functions/.*"), f.HandleFunctionsGet)
@@ -57,7 +85,8 @@ func (f *Fission) Serve() http.Handler {
 	return handler
 }
 
-// /v2/getServiceForFunction
+// HandleGetServiceForFunction emulates the /v2/getServiceForFunction
+// Fission endpoint.
 func (f *Fission) HandleGetServiceForFunction(w http.ResponseWriter, r *http.Request) {
 	bs, err := ioutil.ReadAll(r.Body)
 	r.Body.Close()
@@ -81,11 +110,7 @@ func (f *Fission) HandleGetServiceForFunction(w http.ResponseWriter, r *http.Req
 	w.Write([]byte(svc))
 }
 
-func (f *Fission) Start() error {
-	return f.Platform.Start()
-}
-
-// /v2/tapService
+// HandleTapService emulates the /v2/tapService Fission endpoint.
 func (f *Fission) HandleTapService(w http.ResponseWriter, r *http.Request) {
 	bs, err := ioutil.ReadAll(r.Body)
 	defer r.Body.Close()
@@ -105,19 +130,22 @@ func (f *Fission) HandleTapService(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// /v2/functions/.*
+// HandleFunctionsGet emulates the /v2/functions/.* Fission endpoints.
+// Currently it simply returns an empty map.
 func (f *Fission) HandleFunctionsGet(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("{}"))
 }
 
-// /fission-function/
+// HandleFunctionRun emulates the /fission-function/.* Fission endpoints.
+//
+// It checks for the presence of the runtime query parameter,
+// which allows you to override the runtime of the function.
 func (f *Fission) HandleFunctionRun(w http.ResponseWriter, r *http.Request) {
 	// Parse arguments: fnname, runtime
 	var seconds float64
 	var err error
 	if queryRuntime := r.URL.Query().Get("runtime"); len(queryRuntime) > 0 {
-		// Read query
 		seconds, err = strconv.ParseFloat(queryRuntime, 64)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -126,22 +154,18 @@ func (f *Fission) HandleFunctionRun(w http.ResponseWriter, r *http.Request) {
 	}
 	runtime := time.Duration(seconds * float64(time.Second))
 	fnName := getFunctionNameFromUrl(r.URL)
-	f.createIfUndefined(fnName)
 	
-	// Run function
-	report, err := f.Platform.Run(fnName, &runtime)
+	report, err := f.Run(fnName, &runtime)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	
-	// Simulate runtime
-	result, _ := json.Marshal(map[string]interface{}{
-		"started_at":  report.StartedAt.UnixNano(),
-		"finished_at": report.FinishedAt.UnixNano(),
-		"coldStart":   report.ColdStart.Nanoseconds(),
-		"runtime":     report.Runtime.Nanoseconds(),
-	})
+	result, err := json.Marshal(report)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusOK)
 	w.Write(result)
 }
@@ -161,8 +185,6 @@ type ObjectMeta struct {
 	Name string `json:"name,omitempty" protobuf:"bytes,1,opt,name=name"`
 	// Namespace string `json:"namespace,omitempty" protobuf:"bytes,3,opt,name=namespace"`
 }
-
-var fnUrlRegEx = regexp.MustCompile("/(.*)$")
 
 func getFunctionNameFromUrl(url *url.URL) string {
 	return url.Path[strings.LastIndex(url.Path, "/")+1:]
